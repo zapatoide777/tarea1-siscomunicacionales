@@ -1,0 +1,25 @@
+# Entornos y archivos temporales de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Grabaciones originales y resultados locales (se comparten aparte)
+/datos/
+/resultados/
+
+# Compilaciones y archivos temporales del editor
+/build/
+*.elf
+*.hex
+*.o
+*.log
+*.tmp
+~$*
+.DS_Store
+Thumbs.db
+
+# Credenciales y ajustes privados de cada computador
+.env
+.env.*

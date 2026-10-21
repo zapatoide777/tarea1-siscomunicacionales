@@ -1,0 +1,3 @@
+# Los documentos se guardan como binarios, sin cambiar sus saltos de línea.
+*.pdf binary
+*.docx binary
