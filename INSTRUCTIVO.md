@@ -232,21 +232,16 @@ rutas relativas. La calibración y los resultados pueden regenerarse desde los
 videos originales. Si el compañero recibe una calibración ya hecha con el mismo
 montaje, puede colocarla en `resultados/calibracion.json`.
 
-Para la primera publicación, creen en GitHub un repositorio vacío y utilicen
-su URL real. Si es privado, agreguen al compañero como colaborador. Una vez
-configurado el nombre y correo del autor de Git, la secuencia es:
+El repositorio público está en
+[zapatoide777/tarea1-siscomunicacionales](https://github.com/zapatoide777/tarea1-siscomunicacionales).
+Tu compañero puede clonarlo siguiendo el README. Para que también pueda subir
+cambios directamente, el propietario debe invitarlo como colaborador desde
+Settings → Collaborators en GitHub; conocer el enlace no da permiso de escritura.
 
-```powershell
-git status
-git add README.md INSTRUCTIVO.md .gitignore .gitattributes ensayos.json codigo Tarea1_SisCom_2026.docx informe_software_tarea1.pdf
-git commit -m "Preparar proyecto de comunicacion optica Morse"
-git remote add origin URL_DEL_REPOSITORIO
-git push -u origin main
-```
-
-Si `origin` ya está configurado, omite `git remote add`. Si el primer commit
-ya existe, empieza desde el paso que corresponda. Cuando Git pida iniciar
-sesión, utiliza tu cuenta mediante el mecanismo de autenticación que abra.
+Después de clonar, cada integrante configura su propio nombre y correo de Git
+para identificar al autor de sus commits. Puede usar el correo `noreply` que aparece en los
+ajustes de correo de su cuenta de GitHub. Cuando Git pida iniciar sesión,
+utiliza tu cuenta mediante el mecanismo de autenticación que abra.
 
 Para trabajar después de la primera subida, comienza con `git pull --ff-only`
 cuando no tengas cambios pendientes. Al terminar, usa `git status`, añade los

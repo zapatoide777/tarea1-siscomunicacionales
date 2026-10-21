@@ -1,5 +1,7 @@
 # Tarea 1 · Comunicación óptica Morse
 
+Repositorio público: [zapatoide777/tarea1-siscomunicacionales](https://github.com/zapatoide777/tarea1-siscomunicacionales).
+
 Proyecto de Sistemas de Comunicaciones, UdeC, 2026. Un Arduino UNO transmite
 letras mediante un LED. Una cámara graba la luz y Python reconstruye el texto
 desde el video. Después calcula los errores y analiza la señal recibida.
@@ -49,11 +51,11 @@ están fijadas en `codigo/receptor/requirements.txt`.
 
 ## Instalar después de clonar
 
-Los ejemplos usan PowerShell en Windows. Reemplaza `URL_DEL_REPOSITORIO` por la
-URL real de GitHub; no copies ese texto como una dirección válida.
+Los ejemplos usan PowerShell en Windows. El comando de clonado guarda el
+proyecto en una carpeta local llamada `tarea1`.
 
 ```powershell
-git clone URL_DEL_REPOSITORIO tarea1
+git clone https://github.com/zapatoide777/tarea1-siscomunicacionales.git tarea1
 cd tarea1
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r codigo/receptor/requirements.txt
