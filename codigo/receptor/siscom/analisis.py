@@ -4,18 +4,65 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import welch
 
 
-def figura_senal(tiempo, intensidad, umbral):
+def figura_senal(tiempo, intensidad, umbral, fs=None):
     """Muestra el brillo medido en la ROI y el umbral ON/OFF."""
     figura, eje = plt.subplots(figsize=(10, 3.5), constrained_layout=True)
     # La línea horizontal separa los cuadros con luz de los cuadros sin luz.
     eje.plot(tiempo, intensidad, lw=1, label="ROI")
     eje.axhline(umbral, color="tab:red", ls="--", label="Umbral fijo")
     eje.set(xlabel="Tiempo (s)", ylabel="Intensidad digital", title="Señal recibida")
+    if fs is not None:
+        eje.set_title(f"Señal recibida · fs = {fs:.3f} muestras/s (efectiva)")
     eje.grid(alpha=.25)
     eje.legend()
+    return figura
+
+
+def figura_decisiones(tiempo, intensidad, configuracion, decisiones):
+    """Documenta los primeros ocho tramos sin alterar la decodificación."""
+    figura, ejes = plt.subplots(2, 1, figsize=(9, 6), constrained_layout=True,
+                               gridspec_kw={"height_ratios": [2, 3]})
+    eje, tabla = ejes
+    tiempo = np.asarray(tiempo)
+    intensidad = np.asarray(intensidad)
+    muestra = decisiones[:8]
+    nombres = {"punto": "Punto", "raya": "Raya", "simbolo": "Pausa de símbolo",
+               "letra": "Pausa de letra", "palabra": "Pausa de palabra",
+               "pulso_invalido": "Pulso fuera de tolerancia",
+               "pausa_invalida": "Pausa fuera de tolerancia"}
+    eje.plot(tiempo, intensidad, lw=1)
+    eje.axhline(configuracion["threshold"], ls="--", color="tab:red", label="Umbral")
+    filas = []
+    origen = float(tiempo[0])
+    for numero, decision in enumerate(muestra, 1):
+        inicio, fin = origen + decision["start"], origen + decision["end"]
+        color = "tab:green" if decision["valid"] else "tab:red"
+        eje.axvspan(inicio, fin, alpha=.12, color=color)
+        eje.text((inicio + fin) / 2, .95, str(numero), ha="center", va="top",
+                 transform=eje.get_xaxis_transform(), fontsize=9)
+        filas.append([str(numero), "ON" if decision["state"] else "OFF",
+                      f"{inicio:.3f}–{fin:.3f}", f"{decision['duration'] * 1000:.1f}",
+                      f"{decision['units_measured']:.2f}", nombres[decision["kind"]]])
+    if muestra:
+        eje.set_xlim(origen + muestra[0]["start"], origen + muestra[-1]["end"])
+    else:
+        tabla.text(.5, .5, "No se detectaron tramos de mensaje.", ha="center")
+    eje.set(xlabel="Tiempo en el video (s)", ylabel="Intensidad digital",
+            title="Tramo recibido y decisiones temporales")
+    eje.grid(alpha=.25)
+    eje.legend()
+    tabla.axis("off")
+    if filas:
+        celdas = tabla.table(cellText=filas,
+                            colLabels=["N°", "LED", "Inicio–fin (s)", "Duración (ms)", "Duración/T", "Decisión"],
+                            colWidths=[.05, .07, .21, .16, .14, .37], loc="center")
+        celdas.auto_set_font_size(False)
+        celdas.set_fontsize(8)
+        celdas.scale(1, 1.65)
+    figura.suptitle(f"T = {configuracion['t_seconds'] * 1000:.1f} ms · "
+                     f"tolerancia = ±{configuracion['tolerance_units']:.3f} T")
     return figura
 
 
@@ -24,11 +71,13 @@ def figura_espectro(espectro):
     figura, ejes = plt.subplots(2, 1, figsize=(9, 6), constrained_layout=True)
     # Arriba se ven las frecuencias presentes; abajo, cómo se reparte la potencia.
     ejes[0].plot(espectro["fft_f"], espectro["amplitude"])
-    ejes[0].set(xlabel="Frecuencia (Hz)", ylabel="Amplitud digital", title="FFT sin promedio")
+    ejes[0].set(xlabel="Frecuencia (Hz)", ylabel="Amplitud digital",
+                title=r"FFT de $X[n] = I[n] - I_{\mathrm{prom}}$")
     ejes[1].plot(espectro["psd_f"], espectro["psd"])
     ejes[1].axvline(espectro["b95"], color="tab:red", ls="--",
                    label=f"B95 = {espectro['b95']:.3f} Hz")
-    ejes[1].set(xlabel="Frecuencia (Hz)", ylabel="Intensidad digital²/Hz", title="PSD Welch")
+    ejes[1].set(xlabel="Frecuencia (Hz)", ylabel="Intensidad digital²/Hz",
+                title=r"PSD de $X[n]$ · Periodograma de una sola cara")
     ejes[1].legend()
     for eje in ejes:
         eje.set_xlim(0, espectro["fs"]/2)
@@ -63,7 +112,7 @@ def figura_comparacion(ensayo_cercano, ensayo_lejano, umbral, ventana=(0., 3.)):
             raise ValueError("No se puede alinear por primer pulso una señal sin pulsos")
         # Pone ambos primeros pulsos en el mismo instante para compararlos.
         tiempo_transcurrido = (
-            np.arange(len(datos_senal["intensity"])) / datos_senal["fs"]
+            datos_senal["time"] - datos_senal["time"][0]
             - resultado_decodificacion["decisions"][0]["start"]
         )
         dentro_ventana = (tiempo_transcurrido >= ventana[0]) & (tiempo_transcurrido <= ventana[1])
@@ -79,7 +128,7 @@ def figura_comparacion(ensayo_cercano, ensayo_lejano, umbral, ventana=(0., 3.)):
 # Frecuencias de la señal y ancho B95.
 
 
-def analizar_senal(intensidad, fps: float) -> dict:
+def analizar_senal(intensidad, fps: float, tiempos=None) -> dict:
     """Calcula qué frecuencias aparecen en el brillo medido cuadro a cuadro."""
     muestras = np.asarray(intensidad, dtype=float)
     if (
@@ -91,46 +140,63 @@ def analizar_senal(intensidad, fps: float) -> dict:
     ):
         raise ValueError("Se requieren al menos 4 muestras finitas y FPS positivos")
 
+    tiempo_uniforme = np.arange(len(muestras), dtype=float) / fps
+    remuestreo = False
+    if tiempos is not None:
+        tiempos = np.asarray(tiempos, dtype=float)
+        if (tiempos.shape != muestras.shape or not np.all(np.isfinite(tiempos))
+                or np.any(np.diff(tiempos) <= 0)):
+            raise ValueError("Tiempos invalidos para calcular espectro")
+        intervalos = np.diff(tiempos)
+        intervalo = float(np.median(intervalos))
+        remuestreo = not np.allclose(intervalos, intervalo, rtol=.005, atol=.000002)
+        if remuestreo:
+            cantidad = int(np.floor((tiempos[-1] - tiempos[0]) / intervalo + 1e-8)) + 1
+            if cantidad > max(1000000, len(muestras) * 100):
+                raise ValueError("Saltos temporales demasiado grandes para calcular un espectro fiable")
+            tiempo_uniforme = tiempos[0] + np.arange(cantidad) * intervalo
+            muestras = np.interp(tiempo_uniforme, tiempos, muestras)
+            fps = 1 / intervalo
+        else:
+            tiempo_uniforme = tiempos.copy()
+
     # Resta el brillo promedio para estudiar los cambios de luz, no el fondo fijo.
     muestras_sin_media = muestras - muestras.mean()
     cantidad_muestras = len(muestras)
 
     # La FFT separa la señal en frecuencias. Se conserva la mitad útil del
     # espectro y se ajustan sus amplitudes para representar toda la señal.
-    amplitud = np.abs(np.fft.rfft(muestras_sin_media)) / cantidad_muestras
+    transformada = np.fft.rfft(muestras_sin_media)
+    amplitud = np.abs(transformada) / cantidad_muestras
+    # |DFT|²/(fs N) tiene unidades de intensidad²/Hz. Se aplica el mismo
+    # plegado unilateral a potencia y amplitud, por separado.
+    densidad_potencia = np.abs(transformada)**2 / (fps * cantidad_muestras)
     if cantidad_muestras % 2 == 0:
         amplitud[1:-1] *= 2
+        densidad_potencia[1:-1] *= 2
     else:
         amplitud[1:] *= 2
-    frecuencias_fft = np.fft.rfftfreq(cantidad_muestras, 1 / fps)
+        # Con N impar la última componente no es Nyquist: también se duplica.
+        densidad_potencia[1:] *= 2
+    delta_f = float(fps / cantidad_muestras)
+    frecuencias_fft = np.arange(len(transformada), dtype=float) * delta_f
+    frecuencias_psd = frecuencias_fft.copy()
 
-    # La PSD muestra cuánta potencia corresponde a cada frecuencia. Welch la
-    # calcula promediando partes superpuestas; Hann suaviza sus bordes.
-    longitud_segmento = min(256, cantidad_muestras)
-    frecuencias_psd, densidad_potencia = welch(
-        muestras_sin_media,
-        fs=fps,
-        window="hann",
-        nperseg=longitud_segmento,
-        noverlap=longitud_segmento // 2,
-        detrend=False,
-        scaling="density",
-    )
-
-    # Suma el área bajo la PSD desde 0 Hz. B95 es la frecuencia donde ya se
-    # acumuló el 95 % de esa área.
-    areas_intervalos = (
-        (densidad_potencia[:-1] + densidad_potencia[1:])
-        * np.diff(frecuencias_psd)
-        / 2
-    )
-    area_acumulada = np.r_[0.0, np.cumsum(areas_intervalos)]
+    # Cada bin aporta PSD[k] Δf; los trapecios perderían parte de la potencia
+    # de los extremos. Esta suma discreta conserva exactamente Parseval.
+    potencias_bins = densidad_potencia * delta_f
+    area_acumulada = np.cumsum(potencias_bins)
     area_total = float(area_acumulada[-1])
+    potencia_temporal = float(np.mean(muestras_sin_media**2))
+    error_parseval = abs(area_total - potencia_temporal)
+    parseval_correcto = bool(np.isclose(area_total, potencia_temporal, rtol=1e-10, atol=1e-12))
+    if not parseval_correcto:
+        raise ValueError("El periodograma no conserva la potencia de la señal centrada (Parseval)")
     ancho_b95 = 0.0
     if area_total > 0:
-        ancho_b95 = float(
-            np.interp(0.95 * area_total, area_acumulada, frecuencias_psd)
-        )
+        indice_b95 = min(len(frecuencias_psd) - 1,
+                         int(np.searchsorted(area_acumulada, 0.95 * area_total)))
+        ancho_b95 = float(frecuencias_psd[indice_b95])
 
     return dict(
         fft_f=frecuencias_fft,
@@ -141,14 +207,35 @@ def analizar_senal(intensidad, fps: float) -> dict:
         b95=ancho_b95,
         psd_area=area_total,
         mean=float(muestras.mean()),
-        variance=float(np.mean(muestras_sin_media**2)),
-        method="Welch",
-        window="hann",
-        nperseg=longitud_segmento,
-        noverlap=longitud_segmento // 2,
+        variance=potencia_temporal,
+        method="Periodograma de una sola cara",
+        window="boxcar",
+        # Campos conservados por compatibilidad: un único registro completo.
+        nperseg=cantidad_muestras,
+        noverlap=0,
         detrend=False,
         scaling="density",
+        centering="X[n] = I[n] - mean(I)",
+        sample_count=cantidad_muestras,
+        frequency_rule="f[k] = k fs/N, k = 0,...,floor(N/2)",
+        delta_f_hz=delta_f,
+        psd_normalization="abs(rFFT(X))**2/(fs*N); duplicar interiores, excepto DC y Nyquist si N par",
+        fft_amplitude_normalization="abs(rFFT(X))/N; duplicar interiores, excepto DC y Nyquist si N par",
+        psd_units="intensidad digital^2/Hz",
+        integration_method="sum(PSD[k] * delta_f); cumulative[k] incluye el bin k",
+        b95_method="Primera frecuencia con cumulative[k] >= 0.95 * psd_area; sin interpolacion",
+        time_power=potencia_temporal,
+        parseval_absolute_error=error_parseval,
+        parseval_relative_error=(error_parseval / potencia_temporal if potencia_temporal > 0 else 0.0),
+        parseval_ok=parseval_correcto,
+        parseval_rtol=1e-10,
+        parseval_atol=1e-12,
         fs=fps,
+        resampled=bool(remuestreo),
+        sampling=("Interpolacion lineal a intervalo mediano SOLO para FFT/PSD; Morse usa PTS originales"
+                  if remuestreo else "Muestreo uniforme original; sin remuestreo"),
+        sample_time=tiempo_uniforme,
+        sample_intensity=muestras,
     )
 
 # Errores entre el texto esperado y el texto reconstruido.

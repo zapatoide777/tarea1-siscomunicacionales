@@ -1,9 +1,10 @@
 #include <Arduino.h>
 #include <string.h>
 
-// Ajustes del montaje: LED en D8 y T inicial de 300 ms por punto.
+// Ajustes del montaje: LEDs en D2 a D9 y T inicial de 300 ms por punto.
 // Los mensajes se guardan en arreglos de tamaño fijo porque el UNO tiene poca memoria.
-const uint8_t PIN_LED = 8;
+const uint8_t PINES_LED[] = {2, 3, 4, 5, 6, 7, 8, 9};
+const uint8_t NUM_LEDS = 8;
 const bool SINCRONIZAR_LED_INTEGRADO = true;  // false para desactivar el indicador integrado.
 const uint8_t MAXIMO_LETRAS = 80;
 const uint16_t CAPACIDAD_LINEA = 192;  // Incluye terminador NUL.
@@ -27,8 +28,12 @@ bool esEspacio(char caracter) {
 }
 
 void ponerLed(bool encendido) {
+  // Enciende o apaga todos los LEDs del arreglo simultáneamente
+  for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    digitalWrite(PINES_LED[i], encendido ? HIGH : LOW);
+  }
+
   // El LED integrado repite la señal y permite verla directamente en la placa.
-  digitalWrite(PIN_LED, encendido ? HIGH : LOW);
   if (SINCRONIZAR_LED_INTEGRADO) {
     digitalWrite(LED_BUILTIN, encendido ? HIGH : LOW);
   }
@@ -104,7 +109,7 @@ bool normalizarMensaje(const char *entrada) {
       if (indiceSalida) espacioPendiente = true;
       continue;
     }
-    if (caracter >= 'a' && caracter <= 'z') caracter -= 'a' - 'A';
+    if (caracter >= 'a' && caracter <= 'z') caracter -= ('a' - 'A');
     if (caracter < 'A' || caracter > 'Z') {
       Serial.println(F("ERROR INVALID_CHARACTER"));
       return false;
@@ -175,7 +180,7 @@ void procesarLinea() {
     } else {
       Serial.print(F("STATUS T "));
       Serial.print(duracionUnidadMs);
-      Serial.print(F(" PIN 8 BUILTIN "));
+      Serial.print(F(" PINES 2-9 BUILTIN "));
       Serial.print(SINCRONIZAR_LED_INTEGRADO ? 1 : 0);
       Serial.println(F(" MAX_LETTERS 80 IDLE"));
     }
@@ -185,8 +190,11 @@ void procesarLinea() {
 }
 
 void setup() {
-  // Prepara el LED y anuncia que la placa está lista para recibir órdenes.
-  pinMode(PIN_LED, OUTPUT);
+  // Prepara los pines del arreglo como salidas
+  for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    pinMode(PINES_LED[i], OUTPUT);
+  }
+
   if (SINCRONIZAR_LED_INTEGRADO) pinMode(LED_BUILTIN, OUTPUT);
   ponerLed(false);
   Serial.begin(115200);

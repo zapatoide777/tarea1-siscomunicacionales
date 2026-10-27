@@ -61,12 +61,14 @@ def escribir_csv(ruta, filas, campos=None):
         escritor.writerows(filas)
 
 
-def procesar_video(ruta_video, configuracion, roi=None, inicio=0., fin=None, salida=None):
-    """Extrae la señal, la decodifica y calcula su espectro.
+def procesar_video(ruta_video, configuracion, roi=None, inicio=0., fin=None, salida=None,
+                   incluir_espectro=True):
+    """Extrae y decodifica la señal; el espectro es opcional.
 
     La configuración aporta el umbral y los tiempos de calibración. La ROI se
     puede desplazar, pero su ancho y alto deben coincidir con los calibrados.
-    Si se indica ``salida``, también se exportan los resultados.
+    Si se indica ``salida``, también se exportan los resultados. La interfaz
+    usa ``incluir_espectro=False`` para entregar solo las tareas del receptor.
     """
     # Se puede mover la ROI para centrar el LED, pero debe conservar su tamaño.
     if roi is None:
@@ -76,16 +78,47 @@ def procesar_video(ruta_video, configuracion, roi=None, inicio=0., fin=None, sal
 
     # Del video sale una curva de brillo; de esa curva salen texto y espectro.
     datos_senal = extraer_video(ruta_video, roi=roi, inicio=inicio, fin=fin)
-    resultado = decodificar(datos_senal["intensity"], datos_senal["fs"], configuracion)
+    resultado = decodificar(
+        datos_senal["intensity"], datos_senal["fs"], configuracion,
+        tiempos=datos_senal["time"], duraciones=datos_senal["frame_durations"],
+    )
     resultado["warnings"] += datos_senal["metadata"]["warnings"]
-    espectro = analizar_senal(datos_senal["intensity"], datos_senal["fs"])
+    espectro = (analizar_senal(datos_senal["intensity"], datos_senal["fs"], datos_senal["time"])
+                if incluir_espectro else None)
     datos_procesados = dict(
         signal=datos_senal, result=resultado, spectrum=espectro, config=configuracion
     )
 
     if salida is not None:
-        exportar_resultado(datos_procesados, salida)
+        if incluir_espectro:
+            exportar_resultado(datos_procesados, salida)
+        else:
+            exportar_recepcion(datos_procesados, salida)
     return datos_procesados
+
+
+def exportar_recepcion(datos, salida):
+    """Entrega los datos exigidos para el receptor sin generar análisis espectral."""
+    salida = Path(salida)
+    salida.mkdir(parents=True, exist_ok=True)
+    senal, resultado, config = datos["signal"], datos["result"], datos["config"]
+    (salida / "texto_recibido.txt").write_text(resultado["text"], encoding="utf-8")
+    escribir_json(salida / "resultado.json", resultado)
+    escribir_json(salida / "calibracion_utilizada.json", config)
+    escribir_json(salida / "video.json", {
+        "video": senal["metadata"]["source"], "roi": senal["roi"],
+        "fs_efectiva_hz": senal["fs"], "fps_nominal": senal["metadata"]["nominal_fps"],
+        "inicio_s": float(senal["time"][0]),
+        "tiempos_decisiones": "Segundos relativos al primer cuadro del tramo seleccionado",
+        "avisos_recepcion": resultado["warnings"],
+    })
+    escribir_csv(salida / "senal.csv", [dict(time=float(t), intensity=float(i))
+                 for t, i in zip(senal["time"], senal["intensity"])])
+    for nombre, figura in (
+        ("senal", figura_senal(senal["time"], senal["intensity"], config["threshold"], senal["fs"])),
+    ):
+        figura.savefig(salida / f"{nombre}.png", dpi=160)
+        plt.close(figura)
 
 
 def exportar_resultado(datos, salida):
@@ -113,19 +146,38 @@ def exportar_resultado(datos, salida):
     metadatos["python"] = platform.python_version()
     metadatos["versions"] = {
         paquete: importlib.metadata.version(paquete)
-        for paquete in ["numpy", "scipy", "opencv-python", "matplotlib"]
+        for paquete in ["numpy", "scipy", "opencv-python", "matplotlib", "av"]
     }
     with Path(metadatos["source"]).open("rb") as archivo_video:
         metadatos["sha256_video"] = hashlib.file_digest(archivo_video, "sha256").hexdigest()
     metadatos["decision_times"] = "start/end relativos al primer cuadro del tramo extraido"
     metadatos["decision_video_offset_s"] = float(datos_senal["time"][0])
+    metadatos["spectrum_estimation"] = {
+        clave: valor for clave, valor in espectro.items() if not isinstance(valor, np.ndarray)
+    }
     escribir_json(directorio_salida / "metadatos.json", metadatos)
+    escribir_json(directorio_salida / "diagnostico.json", {
+        **metadatos["diagnostics"],
+        "threshold": datos["config"]["threshold"],
+        "calibration_off_level": datos["config"].get("off_level"),
+        "calibration_on_level": datos["config"].get("on_level"),
+        "spectrum_sampling": espectro["sampling"],
+        "spectrum_method": espectro["method"],
+        "psd_integration": espectro["integration_method"],
+        "parseval_ok": espectro["parseval_ok"],
+        "parseval_absolute_error": espectro["parseval_absolute_error"],
+        "warnings": resultado["warnings"],
+    })
 
     # Estos CSV permiten revisar por separado la curva y los cálculos.
     filas_senal = []
     for tiempo_s, nivel in zip(datos_senal["time"], datos_senal["intensity"]):
         filas_senal.append(dict(time=tiempo_s, intensity=nivel))
     escribir_csv(directorio_salida / "senal.csv", filas_senal)
+    escribir_csv(directorio_salida / "senal_espectro.csv", [
+        dict(time=float(t), intensity=float(y))
+        for t, y in zip(espectro["sample_time"], espectro["sample_intensity"])
+    ])
     escribir_csv(
         directorio_salida / "decisiones.csv",
         resultado["decisions"],

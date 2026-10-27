@@ -1,110 +1,43 @@
 # Tarea 1 · Comunicación óptica Morse
 
-Repositorio público: [zapatoide777/tarea1-siscomunicacionales](https://github.com/zapatoide777/tarea1-siscomunicacionales).
+## Empezar
 
-Proyecto de Sistemas de Comunicaciones, UdeC, 2026. Un Arduino UNO transmite
-letras mediante un LED. Una cámara graba la luz y Python reconstruye el texto
-desde el video. Después calcula los errores y analiza la señal recibida.
+Abre `abrir_interfaz.cmd` con doble clic. Pulsa **Ejemplo 0,5 m** y luego **Decodificar** para abrir uno de los videos incluidos. La calibración de esos videos se carga al iniciar.
 
-El Arduino se maneja desde el **Monitor Serial de Arduino IDE**. Python se
-ejecuta después de grabar; no necesita conectarse al Arduino por USB.
+La interfaz se concentra en el receptor: ROI y tramo manuales, intensidad media por cuadro, señal y frecuencia de muestreo, calibración común a 0,5 m, decisiones Morse, texto recibido y CER con espacios. Abre cada video que quieras analizar; cada ejecución guarda una carpeta nueva en `resultados`.
 
-Lee [INSTRUCTIVO.md](INSTRUCTIVO.md) para conocer el montaje, cada programa,
-la calibración, los resultados y la forma de trabajar entre compañeros.
+Las pestañas son **Resultado**, **Señal** y **FFT y PSD**. Al decodificar también se muestran y guardan la FFT y la densidad espectral de potencia de la señal de brillo. Los comandos anteriores de terminal se conservan para el trabajo posterior.
 
-## Qué contiene
+## FFT, periodograma y Parseval
 
-```text
-tarea1/
-├── README.md                          Instalación y ejecución rápida
-├── INSTRUCTIVO.md                     Explicación general y pasos completos
-├── .gitignore                        Archivos locales que Git no sube
-├── .gitattributes                    Conserva intactos los documentos binarios
-├── ensayos.json                       Rutas de los cuatro videos
-├── codigo/
-│   ├── transmisor_morse/
-│   │   └── transmisor_morse.ino        Programa del Arduino UNO
-│   └── receptor/
-│       ├── ejecutar_tarea1.py          Programa Python que se ejecuta
-│       ├── requirements.txt           Versiones de las bibliotecas
-│       └── siscom/
-│           ├── receptor.py            Video, calibración y lectura de Morse
-│           ├── procesar.py            Procesamiento y exportación de resultados
-│           └── analisis.py            FFT, PSD, B95, CER y gráficos
-├── Tarea1_SisCom_2026.docx             Pauta de la tarea
-└── informe_software_tarea1.pdf        Documento explicativo complementario
-```
+Se centra el brillo medio de la ROI: `X[n] = I[n] − promedio(I)`. Sobre sus N muestras se calcula `F[k] = FFT(X)[k]`, sin normalización en la transformada. Se conservan los índices `k = 0,…,floor(N/2)`, con `f[k] = k fs/N` y `Δf = fs/N`. Con N impar, la última frecuencia queda antes de fs/2 y no existe una componente en Nyquist.
 
-`datos/`, `resultados/` y `.venv/` son carpetas locales: no se suben a Git.
-El clon no incluye grabaciones ni resultados experimentales. Los videos deben
-compartirse aparte y colocarse en las rutas del instructivo.
+La **FFT de amplitud** se grafica por separado: `|F[k]|/N`. La **PSD** se estima con un **periodograma de una sola cara** del registro completo, con ventana rectangular: `PSD[k] = |F[k]|²/(fs N)`, en intensidad digital²/Hz. En ambas gráficas se duplican las componentes interiores, conservando DC y Nyquist sin duplicar; con N impar también se duplica la última componente. La PSD se calcula desde la FFT original, no desde la amplitud ya duplicada.
 
-## Requisitos
+La relación de Parseval, presentada en `teoria/Respuesta espectral SLTI`, se aplica en su forma discreta: `sum(PSD[k] Δf) = mean(X[n]²)`. Se suman las contribuciones de los bins completos, sin trapecios. Cada análisis comprueba esta igualdad con tolerancia relativa `1e-10` y absoluta `1e-12`, y registra ambas potencias y el error numérico. Esta comprobación se ejecutará cuando proceses un video.
 
-- Arduino UNO, cable USB, LED convencional, resistencia de 330 Ω y cables.
-- Cámara o celular que permita grabar video, y soportes para fijar el montaje.
-- Arduino IDE con soporte para Arduino UNO.
-- Python 3.12 de 64 bits y Git en el computador que procesará los videos.
+**B95** es la primera frecuencia donde `cumsum(PSD[k] Δf)` alcanza al menos el 95 % de la potencia total. Se elige un bin, sin interpolación; la resolución es Δf. Si la señal centrada no tiene potencia, se guarda B95 = 0 Hz. Se mide potencia del brillo digital, no watts ópticos.
 
-El entorno local disponible usa Python 3.12.14. Las versiones de las bibliotecas
-están fijadas en `codigo/receptor/requirements.txt`.
+`espectro.json` registra el método, la normalización, Δf, B95 y la comprobación de Parseval. Los CSV y las claves previas se conservan; `nperseg=N` y `noverlap=0` permanecen como campos de compatibilidad para representar un único registro completo. La interfaz mantiene `fft.csv`, `psd.csv`, `espectro.png` y `muestreo_espectro.json`; los comandos de terminal conservan también sus salidas anteriores.
 
-## Instalar después de clonar
+Si los tiempos son irregulares, solo el análisis espectral usa una copia interpolada a una grilla uniforme. Parseval se comprueba sobre esa misma copia centrada. El receptor Morse conserva las muestras y tiempos originales. Los videos no se modifican.
 
-Los ejemplos usan PowerShell en Windows. El comando de clonado guarda el
-proyecto en una carpeta local llamada `tarea1`.
+La primera vez, el lanzador prepara Python y las bibliotecas; requiere conexión a internet. Para instrucciones paso a paso, consulta [INICIO_RAPIDO.md](INICIO_RAPIDO.md). Para grabar con Arduino y procesar desde la terminal, consulta [INSTRUCTIVO.md](INSTRUCTIVO.md).
 
-```powershell
-git clone https://github.com/zapatoide777/tarea1-siscomunicacionales.git tarea1
-cd tarea1
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r codigo/receptor/requirements.txt
-New-Item -ItemType Directory -Force -Path datos/calibracion, datos/videos_originales
-.\.venv\Scripts\python.exe codigo/receptor/ejecutar_tarea1.py --help
-```
+## Archivos principales
 
-No hace falta activar el entorno: los comandos usan directamente su Python.
-Todos los pasos siguientes se ejecutan desde esta misma carpeta.
+- `abrir_interfaz.cmd`: abre la ventana de prueba.
+- `preparar_entorno.ps1`: prepara el entorno Python si hace falta.
+- `codigo/transmisor_morse/transmisor_morse.ino`: programa del Arduino.
+- `codigo/receptor/interfaz.py`: ventana para cargar y procesar videos.
+- `codigo/receptor/ejecutar_tarea1.py`: comandos de terminal.
+- `codigo/receptor/siscom/video.py`: lectura de cuadros y tiempos del video.
+- `codigo/receptor/siscom/receptor.py`: calibración y decodificación Morse.
+- `codigo/receptor/siscom/procesar.py`: evaluación y exportación.
+- `codigo/receptor/siscom/analisis.py`: señal, espectro y errores CER.
+- `ensayos.json`: videos, distancias y regiones LED usados al evaluar.
+- `datos/`: las grabaciones incluidas.
+- `resultados/calibracion.json`: calibración de esas grabaciones.
+- `Tarea1_SisCom_2026.docx` e `informe_software_tarea1.pdf`: material de la tarea.
 
-## Transmitir y grabar
-
-1. Conecta `D8 → resistencia de 330 Ω → ánodo del LED`; conecta el cátodo a GND.
-2. Abre `codigo/transmisor_morse/transmisor_morse.ino` en Arduino IDE, selecciona
-   Arduino UNO y el puerto de la placa, y carga el programa.
-3. Abre el Monitor Serial a **115200 baudios**, con **Nueva línea**.
-4. Envía `T 300`. A 0,5 m, empieza a grabar y envía `CAL`; guarda el video como
-   `datos/calibracion/calibracion.mp4`. `CAL` transmite `AN E`.
-5. Graba `SEND SIS COM` una vez a cada distancia: 0,5; 1; 2 y 3 m. Usa los
-   nombres de video indicados en `ensayos.json`.
-
-Empieza cada grabación antes de enviar la orden y termínala después de `DONE`.
-Espera a que termine una transmisión antes de enviar la siguiente.
-
-## Procesar los videos
-
-Primero guarda el patrón previsto; después calibra una vez y evalúa los cuatro
-videos con esa misma calibración. El segundo comando permite dibujar con el
-mouse el rectángulo que rodea al LED y confirmarlo con Enter.
-
-```powershell
-.\.venv\Scripts\python.exe codigo/receptor/ejecutar_tarea1.py patron --texto "SIS COM" --t-ms 300 --salida resultados/patron_previsto
-.\.venv\Scripts\python.exe codigo/receptor/ejecutar_tarea1.py calibrar --video datos/calibracion/calibracion.mp4 --seleccionar-roi --salida resultados/calibracion.json
-.\.venv\Scripts\python.exe codigo/receptor/ejecutar_tarea1.py evaluar --ensayos ensayos.json --config resultados/calibracion.json --salida resultados/comparacion
-```
-
-Los resultados quedan en `resultados/`: texto recibido, decisiones sobre los
-pulsos, señal de brillo, FFT, PSD, B95, tabla de errores y gráficos por distancia.
-Para la palabra nueva y para recentrar la ROI, sigue [INSTRUCTIVO.md](INSTRUCTIVO.md).
-
-## Estado y colaboración
-
-El código Python ha pasado comprobaciones de sintaxis y apertura de los comandos
-en el entorno local. La compilación del Arduino y la recepción con el montaje
-real siguen pendientes de confirmación. Este repositorio no aporta mediciones
-reales ni garantiza recepción correcta antes de esas pruebas.
-
-El desarrollo del software y la documentación contó con apoyo de IA. Los
-integrantes deben revisar el código y generar sus propias mediciones del montaje.
-
-Para publicar y actualizar el proyecto, consulta la sección de GitHub del
-[instructivo](INSTRUCTIVO.md#trabajar-con-github).
+`INSTRUCTIVO.md` contiene el montaje, las órdenes del Monitor Serial y los pasos para grabar y procesar nuevos videos.

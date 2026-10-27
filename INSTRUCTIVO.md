@@ -165,9 +165,19 @@ original. El cálculo usa la distancia de Levenshtein. Para `SIS COM` el divisor
 es 7, porque el espacio también cuenta. CER = 0 significa recuperación exacta.
 
 La **FFT** muestra las frecuencias presentes en los cambios de brillo. La
-**PSD**, estimada con Welch, muestra cómo se reparte su potencia entre
-frecuencias. **B95** es la frecuencia hasta la que se acumula el 95 % del área
-bajo la PSD. Para esos cálculos se resta primero el brillo promedio.
+**PSD**, estimada con un periodograma de una sola cara del registro completo,
+muestra cómo se reparte su potencia entre frecuencias. Primero se resta el brillo
+promedio: `X[n] = I[n] − promedio(I)`. Con N muestras, la PSD es
+`|FFT(X)[k]|²/(fs N)` en intensidad digital²/Hz, con `f[k] = k fs/N`.
+Se duplican las componentes interiores, pero no DC ni Nyquist (este último solo
+existe si N es par). Con N impar se duplica también la última componente.
+La FFT de amplitud se mantiene como gráfica separada.
+
+Por Parseval, `sum(PSD[k] × fs/N)` debe coincidir con `mean(X[n]²)`.
+El programa comprueba esa igualdad y guarda el error en los metadatos.
+**B95** es la primera frecuencia cuya suma acumulada de `PSD[k] × fs/N`
+alcanza al menos el 95 % de la potencia total, sin interpolación entre bins.
+Su resolución es `fs/N`. Si no hay potencia, B95 se guarda como 0 Hz.
 
 ## 8. Qué resultados revisar
 

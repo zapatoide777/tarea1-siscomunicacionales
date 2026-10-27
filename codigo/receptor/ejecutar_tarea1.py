@@ -129,6 +129,8 @@ def ejecutar_calibracion(argumentos, ruta_salida):
         datos_video["fs"],
         datos_video["roi"],
         fuente=argumentos.video,
+        tiempos=datos_video["time"],
+        duraciones=datos_video["frame_durations"],
     )
     configuracion["video_metadata"] = datos_video["metadata"]
     guardar_configuracion(configuracion, ruta_salida)

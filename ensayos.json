@@ -3,9 +3,28 @@
   "reference": "SIS COM",
   "comparison_window_s": [0, 3],
   "trials": [
-    {"distance_m": 0.5, "video": "datos/videos_originales/sis_com_0p5m.mp4", "valid": true},
-    {"distance_m": 1.0, "video": "datos/videos_originales/sis_com_1p0m.mp4", "valid": true},
-    {"distance_m": 2.0, "video": "datos/videos_originales/sis_com_2p0m.mp4", "valid": true},
-    {"distance_m": 3.0, "video": "datos/videos_originales/sis_com_3p0m.mp4", "valid": true}
+    {
+      "distance_m": 0.5,
+      "video": "datos/videos_originales/sis_com_0p5m.mp4",
+      "valid": true
+    },
+    {
+      "distance_m": 1.0,
+      "video": "datos/videos_originales/sis_com_1p0m.mp4",
+      "valid": true,
+      "roi": [276, 340, 6, 5]
+    },
+    {
+      "distance_m": 2.0,
+      "video": "datos/videos_originales/sis_com_2p0m.mp4",
+      "valid": true,
+      "roi": [245, 413, 6, 5]
+    },
+    {
+      "distance_m": 3.0,
+      "video": "datos/videos_originales/sis_com_3p0m.mp4",
+      "valid": true,
+      "roi": [240, 456, 6, 5]
+    }
   ]
 }

@@ -4,7 +4,6 @@ import json
 from math import isfinite
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 
@@ -123,7 +122,7 @@ def segmentos(texto: str, duracion_t: float = 0.3) -> list[dict]:
 # Del brillo medido al texto recibido.
 
 
-def separar_tramos(intensidad, fps: float, umbral: float) -> list[dict]:
+def separar_tramos(intensidad, fps: float, umbral: float, tiempos=None, duraciones=None) -> list[dict]:
     """Agrupa cuadros consecutivos según el LED esté apagado o encendido.
 
     Cada resultado conserva los índices temporales como segundos, para que
@@ -136,6 +135,25 @@ def separar_tramos(intensidad, fps: float, umbral: float) -> list[dict]:
         raise ValueError("FPS/umbral invalidos")
     if not len(intensidades):
         return []
+    # Conserva la API anterior para señales ideales; los videos aportan PTS.
+    if tiempos is None:
+        limites_tiempo = np.arange(len(intensidades) + 1, dtype=float) / fps
+    else:
+        tiempos = np.asarray(tiempos, dtype=float)
+        if (tiempos.shape != intensidades.shape or not np.all(np.isfinite(tiempos))
+                or (len(tiempos) > 1 and np.any(np.diff(tiempos) <= 0))):
+            raise ValueError("Los tiempos deben ser finitos, crecientes y coincidir con las muestras")
+        if duraciones is not None:
+            duraciones = np.asarray(duraciones, dtype=float)
+            if (duraciones.shape != tiempos.shape or not np.all(np.isfinite(duraciones))
+                    or np.any(duraciones <= 0)):
+                raise ValueError("Duraciones de cuadro invalidas")
+            duracion_final = float(duraciones[-1])
+        elif len(tiempos) > 1:
+            duracion_final = float(np.median(np.diff(tiempos)))
+        else:
+            raise ValueError("Una muestra aislada necesita duracion de cuadro")
+        limites_tiempo = np.r_[tiempos - tiempos[0], tiempos[-1] - tiempos[0] + duracion_final]
     # Si el brillo supera el umbral, se considera luz encendida. Se agrupan
     # los cuadros seguidos que tengan el mismo estado.
     led_encendido = intensidades > umbral
@@ -148,15 +166,15 @@ def separar_tramos(intensidad, fps: float, umbral: float) -> list[dict]:
     for cuadro_inicial, cuadro_final in zip(limites_tramos[:-1], limites_tramos[1:]):
         tramos.append(dict(
             state=int(led_encendido[cuadro_inicial]),
-            start=cuadro_inicial / fps,
-            end=cuadro_final / fps,
-            duration=(cuadro_final - cuadro_inicial) / fps,
+            start=float(limites_tiempo[cuadro_inicial]),
+            end=float(limites_tiempo[cuadro_final]),
+            duration=float(limites_tiempo[cuadro_final] - limites_tiempo[cuadro_inicial]),
             frames=int(cuadro_final - cuadro_inicial),
         ))
     return tramos
 
 
-def decodificar(intensidad, fps: float, configuracion: dict) -> dict:
+def decodificar(intensidad, fps: float, configuracion: dict, tiempos=None, duraciones=None) -> dict:
     """Decodifica las rachas de luz usando la calibración indicada.
 
     Los márgenes sin luz se descartan; luego se clasifican las duraciones
@@ -166,7 +184,9 @@ def decodificar(intensidad, fps: float, configuracion: dict) -> dict:
     tolerancia = float(configuracion["tolerance_units"])
     if not np.isfinite(unidad_t) or unidad_t <= 0 or not 0 < tolerancia < 1:
         raise ValueError("T/tolerancia invalidos: tolerancia en unidades T debe ser <1")
-    todos_los_tramos = separar_tramos(intensidad, fps, float(configuracion["threshold"]))
+    todos_los_tramos = separar_tramos(
+        intensidad, fps, float(configuracion["threshold"]), tiempos, duraciones
+    )
     indices_activos = [
         indice for indice, tramo in enumerate(todos_los_tramos) if tramo["state"]
     ]
@@ -252,7 +272,7 @@ def decodificar(intensidad, fps: float, configuracion: dict) -> dict:
 # Calibración: usa una grabación conocida de AN E a 0,5 m.
 
 
-def calibrar(intensidades, fps: float, roi, fuente="", distancia=0.5) -> dict:
+def calibrar(intensidades, fps: float, roi, fuente="", distancia=0.5, tiempos=None, duraciones=None) -> dict:
     """Estima el umbral de brillo, T y tolerancia usando la secuencia CAL.
 
     La calibracion oficial se hace a 0,5 m. La secuencia conocida permite
@@ -292,7 +312,7 @@ def calibrar(intensidades, fps: float, roi, fuente="", distancia=0.5) -> dict:
     umbral = float((nivel_apagado + nivel_encendido) / 2)
 
     # Busca los pulsos de AN E y quita los segundos apagados de los extremos.
-    tramos_observados = separar_tramos(intensidades, fps, umbral)
+    tramos_observados = separar_tramos(intensidades, fps, umbral, tiempos, duraciones)
     indices_encendidos = [
         indice for indice, tramo in enumerate(tramos_observados) if tramo["state"]
     ]
@@ -328,7 +348,9 @@ def calibrar(intensidades, fps: float, roi, fuente="", distancia=0.5) -> dict:
         )
     )
     # La tolerancia admite pequeñas diferencias de tiempo entre cuadros.
-    tolerancia = max(0.35, desviacion_maxima + 1 / (fps * duracion_unidad))
+    intervalo_muestreo = (float(np.max(np.diff(tiempos)))
+                         if tiempos is not None and len(tiempos) > 1 else 1 / fps)
+    tolerancia = max(0.35, desviacion_maxima + intervalo_muestreo / duracion_unidad)
     if tolerancia >= 1:
         raise ValueError("Calibracion temporal inconsistente; aumentar T o revisar video")
 
@@ -363,13 +385,24 @@ def cargar_configuracion(ruta) -> dict:
     """Carga la calibración y comprueba que sus valores sean utilizables."""
     configuracion = json.loads(Path(ruta).read_text(encoding="utf-8"))
 
+    if not isinstance(configuracion, dict):
+        raise ValueError("La calibracion debe ser un objeto JSON")
+    requeridos = {"schema_version", "distance_m", "threshold", "t_seconds", "tolerance_units", "roi"}
+    faltantes = requeridos - configuracion.keys()
+    if faltantes:
+        raise ValueError("Faltan campos de calibracion: " + ", ".join(sorted(faltantes)))
+
     if configuracion.get("schema_version") != 1:
         raise ValueError("Version de calibracion no compatible")
     if configuracion.get("distance_m") != 0.5:
         raise ValueError("La configuracion debe provenir de calibracion a 0,5 m")
 
     for nombre_campo in ["threshold", "t_seconds", "tolerance_units"]:
-        if not np.isfinite(float(configuracion[nombre_campo])):
+        try:
+            configuracion[nombre_campo] = float(configuracion[nombre_campo])
+        except (ValueError, TypeError) as error:
+            raise ValueError(f"Parametro no numerico: {nombre_campo}") from error
+        if not np.isfinite(configuracion[nombre_campo]):
             raise ValueError(f"Parametro no finito: {nombre_campo}")
 
     if (
@@ -380,6 +413,10 @@ def cargar_configuracion(ruta) -> dict:
         raise ValueError("Umbral, T o tolerancia fuera de rango")
 
     roi = configuracion["roi"]
+    if not isinstance(roi, list) or len(roi) != 4:
+        raise ValueError("ROI de calibracion requiere una lista de cuatro numeros")
+    if any(not isinstance(valor, (int, float)) or not np.isfinite(valor) for valor in roi):
+        raise ValueError("ROI de calibracion debe contener numeros finitos")
     if (
         len(roi) != 4
         or any(int(valor) != valor for valor in roi)
@@ -388,120 +425,14 @@ def cargar_configuracion(ruta) -> dict:
     ):
         raise ValueError("ROI de calibracion invalida")
 
+    configuracion["roi"] = list(map(int, roi))
+
     return configuracion
 
 # Lectura del video: una muestra de brillo por cada cuadro.
 
 
 def extraer_video(ruta, roi=None, inicio=0., fin=None, seleccion_interactiva=False) -> dict:
-    """Mide la intensidad media de una ROI fija en cada cuadro seleccionado.
-
-    Devuelve la señal de brillo y los metadatos que necesitan el decodificador
-    y las etapas posteriores del procesamiento.
-    """
-    ruta_video = Path(ruta)
-    if not ruta_video.is_file():
-        raise ValueError(f"Video inexistente: {ruta_video}")
-    if not np.isfinite(inicio) or inicio < 0 or (fin is not None and (not np.isfinite(fin) or fin <= inicio)):
-        raise ValueError("Intervalo temporal invalido")
-
-    # FPS es la cantidad de cuadros por segundo que declara el archivo.
-    captura = cv2.VideoCapture(str(ruta_video))
-    try:
-        if not captura.isOpened():
-            raise ValueError("No se pudo abrir el video; comprobar codec")
-        frecuencia_muestreo = float(captura.get(cv2.CAP_PROP_FPS))
-        cuadros_declarados = int(captura.get(cv2.CAP_PROP_FRAME_COUNT))
-        if not np.isfinite(frecuencia_muestreo) or frecuencia_muestreo <= 0:
-            raise ValueError("FPS no disponibles; usar un video con temporizacion documentada")
-
-        intensidades, indices_cuadro, marcas_tiempo = [], [], []
-        primer_cuadro_rgb = None
-        indice_cuadro = 0
-
-        # Lee los cuadros en orden y toma solo el intervalo elegido.
-        while True:
-            lectura_correcta, cuadro = captura.read()
-            if not lectura_correcta:
-                break
-
-            tiempo_cuadro = indice_cuadro / frecuencia_muestreo
-            marca_tiempo = captura.get(cv2.CAP_PROP_POS_MSEC) / 1000.
-            indice_seleccionado = indice_cuadro
-            indice_cuadro += 1
-
-            if tiempo_cuadro < inicio:
-                continue
-            if fin is not None and tiempo_cuadro >= fin:
-                break
-
-            alto_cuadro, ancho_cuadro = cuadro.shape[:2]
-            if primer_cuadro_rgb is None:
-                # ROI es el rectángulo que rodea al LED. Se elige una sola vez
-                # y se mantiene fijo durante toda esta grabación.
-                if seleccion_interactiva:
-                    ventana_roi = "ROI fuente (ENTER confirma)"
-                    roi_seleccionada = cv2.selectROI(ventana_roi, cuadro, False, False)
-                    cv2.destroyWindow(ventana_roi)
-                    roi = list(map(int, roi_seleccionada))
-                if roi is None:
-                    raise ValueError("Debe especificar ROI x y ancho alto o --seleccionar-roi")
-                if len(roi) != 4 or any(int(valor) != valor for valor in roi):
-                    raise ValueError("ROI requiere cuatro coordenadas enteras")
-                roi = list(map(int, roi))
-                # Se conserva el primer cuadro en RGB junto con la señal.
-                primer_cuadro_rgb = cv2.cvtColor(cuadro, cv2.COLOR_BGR2RGB)
-
-            x, y, ancho_roi, alto_roi = roi
-            if (x < 0 or y < 0 or ancho_roi <= 0 or alto_roi <= 0
-                    or x + ancho_roi > ancho_cuadro or y + alto_roi > alto_cuadro):
-                raise ValueError("ROI fuera del cuadro o vacia")
-
-            # Resume todos los píxeles de la ROI en un solo número de brillo.
-            cuadro_roi = cuadro[y:y + alto_roi, x:x + ancho_roi]
-            roi_gris = cv2.cvtColor(cuadro_roi, cv2.COLOR_BGR2GRAY)
-            intensidades.append(float(roi_gris.mean()))
-            indices_cuadro.append(indice_seleccionado)
-            marcas_tiempo.append(marca_tiempo)
-
-        if not intensidades:
-            raise ValueError("No hay cuadros en el tramo seleccionado")
-
-        cuadros_esperados = (cuadros_declarados if fin is None
-                             else min(cuadros_declarados, int(np.ceil(fin * frecuencia_muestreo))))
-        if cuadros_esperados > 0 and indice_cuadro < cuadros_esperados:
-            raise ValueError("Lectura incompleta del video; conservar archivo y revisar codec/adquisicion")
-
-        # Si el video entrega tiempos confiables, comprueba que sus cuadros
-        # lleguen con el ritmo indicado por los FPS.
-        diferencias_marcas = np.diff(marcas_tiempo)
-        advertencias = []
-        if len(diferencias_marcas) and np.all(diferencias_marcas > 0):
-            if np.any(np.abs(diferencias_marcas - 1 / frecuencia_muestreo)
-                      > max(0.003, 0.15 / frecuencia_muestreo)):
-                raise ValueError("Temporizacion variable detectada; normalizar a FPS constantes y conservar original")
-            temporizacion = "Timestamps del decodificador compatibles con FPS nominal"
-        else:
-            temporizacion = "FPS nominal; timestamps no verificables por backend"
-            advertencias.append("Verificar FPS constantes de la camara; backend sin timestamps fiables")
-
-        return dict(
-            intensity=np.asarray(intensidades),
-            time=np.asarray(indices_cuadro) / frecuencia_muestreo,
-            fs=frecuencia_muestreo,
-            roi=roi,
-            first_frame=primer_cuadro_rgb,
-            metadata=dict(
-                source=str(ruta_video.resolve()),
-                fps=frecuencia_muestreo,
-                frames=len(intensidades),
-                frame_size=[ancho_cuadro, alto_cuadro],
-                start=inicio,
-                end=fin,
-                timing=temporizacion,
-                warnings=advertencias,
-            ),
-        )
-    finally:
-        # Cierra el video también cuando aparece un error.
-        captura.release()
+    """Mide brillo original con los tiempos reales de presentacion del video."""
+    from .video import leer_video
+    return leer_video(ruta, roi, inicio, fin, seleccion_interactiva)
